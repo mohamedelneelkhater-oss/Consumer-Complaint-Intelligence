@@ -24,27 +24,50 @@ def pretty_label(label: str) -> str:
 
 @st.cache_resource
 def load_system():
-    """Load model, tokenizer, label names and NLP resources once."""
+    """Load model, tokenizer, label names and NLP resources once (Robust path search)."""
     nltk.download("stopwords", quiet=True)
     nltk.download("wordnet", quiet=True)
 
-    model_path = MODEL_DIR / "best_model.keras" if (MODEL_DIR / "best_model.keras").exists() else MODEL_DIR / "best_keras_model.h5"
+    # تحديد جميع الأماكن المحتملة لوجود ملفات النموذج
+    possible_dirs = [BASE_DIR, BASE_DIR / "model", BASE_DIR / "files"]
+    
+    model_path, tokenizer_path, label_path, info_path = None, None, None, None
+    
+    for d in possible_dirs:
+        if (d / "best_model.keras").exists():
+            model_path = d / "best_model.keras"
+        elif (d / "best_keras_model.h5").exists():
+            model_path = d / "best_keras_model.h5"
+            
+        if (d / "keras_tokenizer.pkl").exists():
+            tokenizer_path = d / "keras_tokenizer.pkl"
+            
+        if (d / "label_names.json").exists():
+            label_path = d / "label_names.json"
+            
+        if (d / "model_info.json").exists():
+            info_path = d / "model_info.json"
+
+    # التحقق من وجود الملفات وإيقاف التطبيق برسالة واضحة إن لم توجد
+    if not model_path:
+        st.error("❌ Model file ('best_model.keras' or 'best_keras_model.h5') not found in any directory!")
+        st.stop()
+        
     model = load_model(str(model_path))
     
-    with open(MODEL_DIR / "keras_tokenizer.pkl", "rb") as f:
+    with open(tokenizer_path, "rb") as f:
         tokenizer = pickle.load(f)
         
-    with open(MODEL_DIR / "label_names.json") as f:
+    with open(label_path) as f:
         label_names = json.load(f)
         
-    info_path = MODEL_DIR / "model_info.json"
-    if info_path.exists():
+    if info_path and info_path.exists():
         with open(info_path) as f:
             info = json.load(f)
     else:
         info = {"best_model": "GRU", "max_len": 150}
 
-    return model, tokenizer, label_names, info, WordNetLemmatizer(), set(stopwords.words("english"))
+    return model, tokenizer, label_names, info, WordNetLemmatizer(), set(stopwords.words("english"))))
 
 model, tokenizer, label_names, info, lemmatizer, stop_words = load_system()
 MAX_LEN = int(info.get("max_len", 150))
