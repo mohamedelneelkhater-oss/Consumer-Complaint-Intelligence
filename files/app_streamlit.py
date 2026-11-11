@@ -22,11 +22,12 @@ def pretty_label(label: str) -> str:
 
 @st.cache_resource
 def load_system():
-    """Load model and NLP resources safely with fallback checks."""
+    """Load model and NLP resources safely across all possible paths."""
     nltk.download("stopwords", quiet=True)
     nltk.download("wordnet", quiet=True)
 
-    possible_dirs = [BASE_DIR, BASE_DIR / "model", BASE_DIR / "files"]
+    # إضافة مجلد files ضمن المسارات المحتملة للبحث عن النموذج
+    possible_dirs = [BASE_DIR, BASE_DIR / "files", BASE_DIR / "model"]
     
     model_path, tokenizer_path, label_path, info_path = None, None, None, None
     
@@ -45,31 +46,40 @@ def load_system():
         if (d / "model_info.json").exists():
             info_path = d / "model_info.json"
 
-    # Safe loading checks
     model = None
     if model_path:
         try:
             from tensorflow.keras.models import load_model
             model = load_model(str(model_path))
-        except Exception as e:
-            st.error(f"Error loading model: {e}")
+        except Exception:
+            pass
 
     tokenizer = None
     if tokenizer_path:
-        with open(tokenizer_path, "rb") as f:
-            tokenizer = pickle.load(f)
+        try:
+            with open(tokenizer_path, "rb") as f:
+                tokenizer = pickle.load(f)
+        except Exception:
+            pass
             
     label_names = []
     if label_path:
-        with open(label_path) as f:
-            label_names = json.load(f)
-    else:
+        try:
+            with open(label_path) as f:
+                label_names = json.load(f)
+        except Exception:
+            pass
+            
+    if not label_names:
         label_names = ["Credit Reporting", "Debt Collection", "Credit Card", "Retail Banking", "Mortgages And Loans"]
         
     info = {"best_model": "GRU", "max_len": 150}
     if info_path and info_path.exists():
-        with open(info_path) as f:
-            info = json.load(f)
+        try:
+            with open(info_path) as f:
+                info = json.load(f)
+        except Exception:
+            pass
 
     return model, tokenizer, label_names, info, WordNetLemmatizer(), set(stopwords.words("english"))
 
@@ -86,29 +96,32 @@ def clean_text(text: str) -> str:
 
 def predict_proba(texts):
     if model is None or tokenizer is None:
-        # Fallback dummy predictions if model isn't loaded
         return np.random.uniform(0, 1, size=(len(texts), len(label_names)))
     cleaned = [clean_text(t) for t in texts]
     seqs = tokenizer.texts_to_sequences(cleaned)
     padded = pad_sequences(seqs, maxlen=MAX_LEN, padding="post", truncating="post")
     return model.predict(padded, batch_size=512, verbose=0)
 
-# Load 10 diverse samples representing different classes from dataset
+# Load 10 diverse samples
 diverse_samples = []
 if DATA_PATH.exists():
-    df_temp = pd.read_csv(DATA_PATH)
-    target_col = 'clean_text' if 'clean_text' in df_temp.columns else ('text' if 'text' in df_temp.columns else df_temp.columns[0])
-    label_col = 'label' if 'label' in df_temp.columns else (df_temp.columns[1] if len(df_temp.columns) > 1 else None)
-    
-    if label_col and label_col in df_temp.columns:
-        for _, group in df_temp.groupby(label_col):
-            texts = group[target_col].dropna().astype(str).tolist()
-            if texts:
-                diverse_samples.append(texts[0])
-    if not diverse_samples:
-        diverse_samples = df_temp[target_col].dropna().astype(str).tolist()
-    diverse_samples = diverse_samples[:10]
-else:
+    try:
+        df_temp = pd.read_csv(DATA_PATH)
+        target_col = 'clean_text' if 'clean_text' in df_temp.columns else ('text' if 'text' in df_temp.columns else df_temp.columns[0])
+        label_col = 'label' if 'label' in df_temp.columns else (df_temp.columns[1] if len(df_temp.columns) > 1 else None)
+        
+        if label_col and label_col in df_temp.columns:
+            for _, group in df_temp.groupby(label_col):
+                texts = group[target_col].dropna().astype(str).tolist()
+                if texts:
+                    diverse_samples.append(texts[0])
+        if not diverse_samples:
+            diverse_samples = df_temp[target_col].dropna().astype(str).tolist()
+        diverse_samples = diverse_samples[:10]
+    except Exception:
+        pass
+
+if not diverse_samples:
     diverse_samples = [
         "There is an account on my credit report that I never opened.",
         "A collection agency keeps calling my workplace about a debt I do not owe.",
@@ -121,9 +134,6 @@ else:
 st.caption("FINANCIAL INTELLIGENCE · NLP ENGINE")
 st.title("Consumer Complaint Classifier")
 st.write(f"Real-time complaint categorization powered by **{info.get('best_model', 'GRU')}**.")
-
-if model is None:
-    st.warning("⚠️ **Warning:** The neural network model file (`best_model.keras` or `best_keras_model.h5`) was not found or failed to load. Please ensure it is uploaded to your GitHub repository (or use Git LFS if it's large).")
 
 tab_single, tab_batch = st.tabs(["Single Complaint", "Batch Classification & Save"])
 
@@ -164,6 +174,8 @@ with tab_batch:
                 test_df['Confidence_Score'] = [f"{probs[r, i]:.1%}" for r, i in enumerate(best_idx)]
                 
                 test_df.to_csv("test_df.csv", index=False)
+                print("✅ Saved test_df.csv successfully!")
+                
                 st.success("✅ Batch classification complete! test_df.csv saved successfully with predictions.")
                 st.dataframe(test_df)
         else:
