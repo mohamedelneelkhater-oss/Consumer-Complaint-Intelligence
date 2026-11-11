@@ -14,7 +14,6 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 BASE_DIR = Path(__file__).parent
-MODEL_DIR = BASE_DIR / "model" if (BASE_DIR / "model").exists() else BASE_DIR
 DATA_PATH = BASE_DIR / "test_df.csv" if (BASE_DIR / "test_df.csv").exists() else (BASE_DIR / "data" / "sample_complaints.csv")
 
 st.set_page_config(page_title="Consumer Complaint Classifier", page_icon="📄", layout="wide")
@@ -28,7 +27,6 @@ def load_system():
     nltk.download("stopwords", quiet=True)
     nltk.download("wordnet", quiet=True)
 
-    # تحديد جميع الأماكن المحتملة لوجود ملفات النموذج
     possible_dirs = [BASE_DIR, BASE_DIR / "model", BASE_DIR / "files"]
     
     model_path, tokenizer_path, label_path, info_path = None, None, None, None
@@ -48,7 +46,6 @@ def load_system():
         if (d / "model_info.json").exists():
             info_path = d / "model_info.json"
 
-    # التحقق من وجود الملفات وإيقاف التطبيق برسالة واضحة إن لم توجد
     if not model_path:
         st.error("❌ Model file ('best_model.keras' or 'best_keras_model.h5') not found in any directory!")
         st.stop()
@@ -67,7 +64,7 @@ def load_system():
     else:
         info = {"best_model": "GRU", "max_len": 150}
 
-    return model, tokenizer, label_names, info, WordNetLemmatizer(), set(stopwords.words("english"))))
+    return model, tokenizer, label_names, info, WordNetLemmatizer(), set(stopwords.words("english"))
 
 model, tokenizer, label_names, info, lemmatizer, stop_words = load_system()
 MAX_LEN = int(info.get("max_len", 150))
