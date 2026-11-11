@@ -1,4 +1,3 @@
-"""Consumer Complaint Intelligence - Streamlit app (GRU model)."""
 import json
 import pickle
 import re
@@ -15,44 +14,40 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 BASE_DIR = Path(__file__).parent
-MODEL_DIR = BASE_DIR / "model"
-SAMPLE_PATH = BASE_DIR / "data" / "sample_complaints.csv"
+MODEL_DIR = BASE_DIR / "model" if (BASE_DIR / "model").exists() else BASE_DIR
+DATA_PATH = BASE_DIR / "test_df.csv" if (BASE_DIR / "test_df.csv").exists() else (BASE_DIR / "data" / "sample_complaints.csv")
 
 st.set_page_config(page_title="Consumer Complaint Classifier", page_icon="📄", layout="wide")
-
-EXAMPLES = {
-    "Credit reporting": "There is an account on my credit report that I never opened. I disputed it with the bureau three times and they still have not removed it.",
-    "Debt collection": "A collection agency keeps calling my workplace about a debt I do not owe, even after I asked them in writing to stop contacting me.",
-    "Credit card": "I was charged an annual fee and interest on my credit card even though the promotional offer promised no fees for the first year.",
-    "Retail banking": "My checking account was frozen without notice and I could not access my money for over a week. The bank gave no explanation.",
-    "Mortgages and loans": "My mortgage servicer miscalculated my escrow account and my monthly payment suddenly increased by hundreds of dollars.",
-}
-
 
 def pretty_label(label: str) -> str:
     return str(label).replace("_", " ").title()
 
-
-@st.cache_resource(show_spinner="Loading model...")
+@st.cache_resource
 def load_system():
     """Load model, tokenizer, label names and NLP resources once."""
     nltk.download("stopwords", quiet=True)
     nltk.download("wordnet", quiet=True)
 
-    model = load_model(MODEL_DIR / "best_model.keras")
+    model_path = MODEL_DIR / "best_model.keras" if (MODEL_DIR / "best_model.keras").exists() else MODEL_DIR / "best_keras_model.h5"
+    model = load_model(str(model_path))
+    
     with open(MODEL_DIR / "keras_tokenizer.pkl", "rb") as f:
         tokenizer = pickle.load(f)
+        
     with open(MODEL_DIR / "label_names.json") as f:
         label_names = json.load(f)
-    with open(MODEL_DIR / "model_info.json") as f:
-        info = json.load(f)
+        
+    info_path = MODEL_DIR / "model_info.json"
+    if info_path.exists():
+        with open(info_path) as f:
+            info = json.load(f)
+    else:
+        info = {"best_model": "GRU", "max_len": 150}
 
     return model, tokenizer, label_names, info, WordNetLemmatizer(), set(stopwords.words("english"))
 
-
 model, tokenizer, label_names, info, lemmatizer, stop_words = load_system()
 MAX_LEN = int(info.get("max_len", 150))
-
 
 def clean_text(text: str) -> str:
     """Same cleaning pipeline used during training."""
@@ -63,37 +58,54 @@ def clean_text(text: str) -> str:
     words = [lemmatizer.lemmatize(w) for w in text.split() if w not in stop_words]
     return " ".join(words)
 
-
 def predict_proba(texts):
     cleaned = [clean_text(t) for t in texts]
     seqs = tokenizer.texts_to_sequences(cleaned)
     padded = pad_sequences(seqs, maxlen=MAX_LEN, padding="post", truncating="post")
     return model.predict(padded, batch_size=512, verbose=0)
 
+# Load 10 diverse samples representing different classes from dataset
+diverse_samples = []
+if DATA_PATH.exists():
+    df_temp = pd.read_csv(DATA_PATH)
+    target_col = 'clean_text' if 'clean_text' in df_temp.columns else ('text' if 'text' in df_temp.columns else df_temp.columns[0])
+    label_col = 'label' if 'label' in df_temp.columns else (df_temp.columns[1] if len(df_temp.columns) > 1 else None)
+    
+    if label_col and label_col in df_temp.columns:
+        for _, group in df_temp.groupby(label_col):
+            texts = group[target_col].dropna().astype(str).tolist()
+            if texts:
+                diverse_samples.append(texts[0])
+    if not diverse_samples:
+        diverse_samples = df_temp[target_col].dropna().astype(str).tolist()
+    diverse_samples = diverse_samples[:10]
+else:
+    diverse_samples = [
+        "There is an account on my credit report that I never opened.",
+        "A collection agency keeps calling my workplace about a debt I do not owe.",
+        "I was charged an annual fee and interest on my credit card unexpectedly.",
+        "My checking account was frozen without notice and I could not access my money.",
+        "My mortgage servicer miscalculated my escrow account and payments increased."
+    ]
 
-# ---------------------------------------------------------------- sidebar
-with st.sidebar:
-    st.header("Model")
-    st.write(f"**Architecture:** {info.get('best_model', 'GRU')}")
-    if "f1_score" in info:
-        st.write(f"**Test F1 (weighted):** {info['f1_score']:.2%}")
-    if "accuracy" in info:
-        st.write(f"**Test accuracy:** {info['accuracy']:.2%}")
-    st.write("**Categories:**")
-    for name in label_names:
-        st.write(f"- {pretty_label(name)}")
+# Main UI Header
+st.caption("FINANCIAL INTELLIGENCE · NLP ENGINE")
+st.title("Consumer Complaint Classifier")
+st.write(f"Real-time complaint categorization powered by **{info.get('best_model', 'GRU')}**.")
 
-tab_single, tab_batch = st.tabs(["Single complaint", "Batch classification"])
+tab_single, tab_batch = st.tabs(["Single Complaint", "Batch Classification & Save"])
 
-# ------------------------------------------------------------ single tab
+# ------------------------------------------------------------ Single Complaint Tab
 with tab_single:
-    st.caption("FINANCIAL INTELLIGENCE · NLP ENGINE")
-    st.title("Consumer Complaint Classifier")
-    st.write("Paste a customer complaint and get the predicted product category with confidence.")
-
-    choice = st.selectbox("Try an example", ["-- write your own --"] + list(EXAMPLES))
-    default_text = EXAMPLES.get(choice, "")
-    complaint = st.text_area("Complaint narrative", value=default_text, height=160, key=f"text_{choice}")
+    st.subheader("Analyze Single Complaint")
+    
+    choice = st.selectbox(
+        "Select a diverse sample text from dataset classes", 
+        ["-- write your own or select a sample --"] + diverse_samples
+    )
+    
+    default_text = choice if choice != "-- write your own or select a sample --" else ""
+    complaint = st.text_area("Complaint narrative", value=default_text, height=160)
 
     if st.button("Classify complaint", type="primary"):
         if not complaint.strip():
@@ -101,51 +113,39 @@ with tab_single:
         else:
             probs = predict_proba([complaint])[0]
             best = int(np.argmax(probs))
-            st.success(f"**Predicted category:** {pretty_label(label_names[best])}  |  **Confidence:** {probs[best]:.1%}")
-            st.markdown("#### Category probabilities")
+            st.success(f"**Predicted Category:** {pretty_label(label_names[best])}  |  **Confidence:** {probs[best]:.1%}")
+            
+            st.markdown("#### Category Probabilities Breakdown")
             for idx in np.argsort(probs)[::-1]:
-                st.write(f"{pretty_label(label_names[idx])} ({probs[idx]:.1%})")
+                st.text(f"{pretty_label(label_names[idx])}: {probs[idx]:.1%}")
                 st.progress(float(probs[idx]))
 
-# ------------------------------------------------------------ batch tab
+# ------------------------------------------------------------ Batch Tab with Auto-Save
 with tab_batch:
-    st.title("Batch classification")
-    st.write("Classify many complaints at once, using the bundled sample or your own CSV file.")
+    st.subheader("Batch Process & Auto-Save to test_df.csv")
+    st.write("Processes clean text, appends prediction columns, and saves directly via `test_df.to_csv('test_df.csv', index=False)`.")
 
-    uploaded = st.file_uploader("Upload a CSV file (optional)", type="csv")
-    if uploaded is not None:
-        batch_df = pd.read_csv(uploaded)
-    elif SAMPLE_PATH.exists():
-        batch_df = pd.read_csv(SAMPLE_PATH)
-        st.info("Using the bundled sample file (`data/sample_complaints.csv`).")
-    else:
-        batch_df = None
-        st.warning("No sample file found. Upload a CSV to continue.")
-
-    if batch_df is not None and not batch_df.empty:
-        text_cols = [c for c in batch_df.columns if batch_df[c].dtype == object]
-        default_idx = text_cols.index("text") if "text" in text_cols else 0
-        text_col = st.selectbox("Text column", text_cols, index=default_idx)
-
-        if st.button("Run batch classification", type="primary"):
-            with st.spinner("Classifying..."):
-                probs = predict_proba(batch_df[text_col].astype(str).tolist())
-            best_idx = probs.argmax(axis=1)
-            result = batch_df.copy()
-            result["predicted_category"] = [pretty_label(label_names[i]) for i in best_idx]
-            result["confidence"] = [f"{probs[r, i]:.1%}" for r, i in enumerate(best_idx)]
-
-            if "label" in result.columns:
-                correct = (result["label"].astype(str) == np.array(label_names)[best_idx]).mean()
-                st.metric("Accuracy on this file", f"{correct:.1%}")
-
-            st.dataframe(result)
-            st.download_button(
-                "Download results (CSV)",
-                result.to_csv(index=False).encode("utf-8"),
-                file_name="predictions.csv",
-                mime="text/csv",
-            )
+    if st.button("Run Batch Classification & Save", type="primary"):
+        if DATA_PATH.exists():
+            with st.spinner("Classifying and saving..."):
+                test_df = pd.read_csv(DATA_PATH).head(30)
+                target_col = 'clean_text' if 'clean_text' in test_df.columns else ('text' if 'text' in test_df.columns else test_df.columns[0])
+                
+                texts = test_df[target_col].astype(str).tolist()
+                probs = predict_proba(texts)
+                best_idx = probs.argmax(axis=1)
+                
+                test_df['Predicted_Class'] = [pretty_label(label_names[i]) for i in best_idx]
+                test_df['Confidence_Score'] = [f"{probs[r, i]:.1%}" for r, i in enumerate(best_idx)]
+                
+                # Save test_df back to csv with index=False
+                test_df.to_csv("test_df.csv", index=False)
+                print("✅ Saved test_df.csv successfully!")
+                
+                st.success("✅ Batch classification complete! test_df.csv saved successfully with predictions.")
+                st.dataframe(test_df)
+        else:
+            st.warning("`test_df.csv` file not found in the workspace.")
 
 st.markdown("---")
-st.caption("Consumer Complaint Intelligence · Instant course project")
+st.caption("Consumer Complaint Intelligence Platform · Production System")
